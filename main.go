@@ -20,7 +20,7 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
-// var messages []clientMessage
+var messages []clientMessage
 
 func main() {
 	router := chi.NewRouter()
@@ -68,6 +68,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
+		// Send ready and listening message to client
 		log.Printf("Received: %s\n", messageBody.Message)
 		if messageBody.Message == "READY" {
 			expectedUserName = messageBody.UserName
@@ -79,9 +80,9 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Store incomming messages
-		// messages = append(messages, messageBody)
+		messages = append(messages, messageBody)
 
-		// Respond with a confirmation message
+		// Respond with latest message to everyone but the author of the message
 		if messageBody.UserName != expectedUserName {
 			response, _ := json.Marshal(messageBody)
 			if err := conn.WriteMessage(messageType, response); err != nil {
