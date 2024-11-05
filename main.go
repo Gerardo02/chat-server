@@ -10,17 +10,19 @@ import (
 )
 
 type clientMessage struct {
-	UserName string `json:"user_name"`
-	Message  string `json:"message"`
+	UserName     string `json:"user_name"`
+	Message      string `json:"message"`
+	FirstMessage bool   `json:"first_message"`
 }
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin:     func(r *http.Request) bool { return true },
-}
-
-var messages []clientMessage
+var (
+	upgrader = websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin:     func(r *http.Request) bool { return true },
+	}
+	clientsConns = make(map[string]*websocket.Conn)
+)
 
 func main() {
 	router := chi.NewRouter()
@@ -70,25 +72,62 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Send ready and listening message to client
 		log.Printf("Received: %s\n", messageBody.Message)
-		if messageBody.Message == "READY" {
+		if messageBody.FirstMessage {
 			expectedUserName = messageBody.UserName
+			response, _ := json.Marshal(clientMessage{
+				UserName:     "Server",
+				Message:      "Welcome to the chat room, " + expectedUserName,
+				FirstMessage: false,
+			})
+
 			log.Println("Received ready from client")
-			if err := conn.WriteMessage(1, []byte("Welcome to the chat room, "+expectedUserName)); err != nil {
+			if err := conn.WriteMessage(1, response); err != nil {
 				log.Println("Error writing message:", err)
 			}
+
+			for k, v := range clientsConns {
+				notifyNewClient, _ := json.Marshal(clientMessage{
+					UserName:     "Server",
+					Message:      expectedUserName + " just joined the chat, say hi :)",
+					FirstMessage: false,
+				})
+				if err := v.WriteMessage(messageType, notifyNewClient); err != nil {
+					log.Printf("Error writing message to: %s\n", k)
+					log.Println(err)
+					continue
+				}
+			}
+
+			clientsConns[expectedUserName] = conn
 			continue
 		}
 
-		// Store incomming messages
-		messages = append(messages, messageBody)
-
 		// Respond with latest message to everyone but the author of the message
-		if messageBody.UserName != expectedUserName {
-			response, _ := json.Marshal(messageBody)
-			if err := conn.WriteMessage(messageType, response); err != nil {
-				log.Println("Error writing message:", err)
-				break
+		for k, v := range clientsConns {
+			if k == expectedUserName {
+				continue
 			}
+
+			response, _ := json.Marshal(messageBody)
+			if err := v.WriteMessage(messageType, response); err != nil {
+				log.Printf("Error writing message to: %s\n", k)
+				log.Println(err)
+				continue
+			}
+		}
+	}
+
+	delete(clientsConns, expectedUserName)
+	for k, v := range clientsConns {
+		response, _ := json.Marshal(clientMessage{
+			UserName:     "Server",
+			Message:      expectedUserName + " exited the chat room :(",
+			FirstMessage: false,
+		})
+		if err := v.WriteMessage(1, response); err != nil {
+			log.Printf("Error writing message to: %s\n", k)
+			log.Println(err)
+			continue
 		}
 	}
 }
